@@ -149,6 +149,7 @@ Suno API 目前主要实现了以下 API:
 - `/api/clip`: 检索特定音乐的信息
 - `/api/concat`: 合并音乐，将扩展后的音乐和原始音乐合并
 - `/api/mv/generate_music`: 创建内部 MV 音乐任务
+- `/api/mv/reference_music`: 用本地参考音频创建内部 MV 音乐任务
 - `/api/mv/import_latest`: 从 Suno 账号同步最新歌曲并下载音频资产
 - `/api/mv/tasks`: 查看内部 MV 音乐任务列表
 - `/api/mv/tasks/{id}`: 刷新并查看内部 MV 音乐任务
@@ -159,7 +160,10 @@ Suno API 目前主要实现了以下 API:
 
 这个 fork 增加了一套本地优先的 MV 音乐任务流。任务数据保存到 `.data/mv-tasks.json`，生成完成后的音频会下载到 `public/mv-assets/audio`。
 
-给 Codex/Agent 交接使用的流程文档见：[docs/codex-suno-workflow.md](docs/codex-suno-workflow.md)。
+给 Codex/Agent 交接使用的流程文档见：
+
+- [docs/codex-suno-workflow.md](docs/codex-suno-workflow.md)
+- [docs/codex-suno-reference-audio.md](docs/codex-suno-reference-audio.md)
 
 直接请求 Suno 生成任务：
 

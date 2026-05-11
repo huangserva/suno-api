@@ -178,6 +178,7 @@ Suno API currently mainly implements the following APIs:
 - `/api/clip`: Get clip information based on ID passed as query parameter `id`
 - `/api/concat`: Generate the whole song from extensions
 - `/api/mv/generate_music`: Create an internal MV music task
+- `/api/mv/reference_music`: Create an internal MV music task from a local reference audio file
 - `/api/mv/import_latest`: Import the latest tracks from your Suno account and download local audio assets
 - `/api/mv/tasks`: List internal MV music tasks
 - `/api/mv/tasks/{id}`: Refresh and fetch an internal MV music task
@@ -190,7 +191,10 @@ You can also specify the cookies in the `Cookie` header of your request, overrid
 
 This fork includes a local-first workflow for MV production. Generated task metadata is stored in `.data/mv-tasks.json`, and finished audio files are downloaded to `public/mv-assets/audio`.
 
-For Codex/agent handoff instructions, see [docs/codex-suno-workflow.md](docs/codex-suno-workflow.md).
+For Codex/agent handoff instructions, see:
+
+- [docs/codex-suno-workflow.md](docs/codex-suno-workflow.md)
+- [docs/codex-suno-reference-audio.md](docs/codex-suno-reference-audio.md)
 
 Create a task through Suno generation:
 

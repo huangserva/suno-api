@@ -40,6 +40,40 @@ export interface AudioInfo {
   error_message?: string; // Error message if any
 }
 
+export interface SunoUploadedAudioInfo {
+  upload_id: string;
+  clip_id: string;
+  status?: string;
+  title?: string;
+  image_url?: string;
+  has_vocal?: boolean;
+  inferred_description?: string;
+  display_tags?: string;
+  inferred_lyrics?: string;
+  duration?: number;
+  s3_id?: string;
+}
+
+export interface SunoReferenceGenerateOptions {
+  reference_audio_path: string;
+  reference_type?: 'extend' | 'cover';
+  prompt?: string;
+  lyrics?: string;
+  tags?: string;
+  title?: string;
+  make_instrumental?: boolean;
+  negative_tags?: string;
+  model?: string;
+  continue_at?: number;
+  audio_weight?: number;
+  wait_audio?: boolean;
+}
+
+export interface SunoReferenceGenerateResult {
+  upload: SunoUploadedAudioInfo;
+  clips: AudioInfo[];
+}
+
 interface PersonaResponse {
   persona: {
     id: string;
@@ -70,6 +104,7 @@ interface PersonaResponse {
 
 class SunoApi {
   private static BASE_URL: string = 'https://studio-api.prod.suno.com';
+  private static WEB_BASE_URL: string = 'https://studio-api-prod.suno.com';
   private static CLERK_BASE_URL: string = 'https://auth.suno.com';
   private static CLERK_VERSION = '5.117.0';
 
@@ -202,6 +237,365 @@ class SunoApi {
       }
     );
     return tokenResponse.data.session_id;
+  }
+
+  private getAudioMimeType(extension: string) {
+    const mimeTypes: Record<string, string> = {
+      aac: 'audio/aac',
+      flac: 'audio/flac',
+      m4a: 'audio/x-m4a',
+      mp3: 'audio/mpeg',
+      mp4: 'audio/mp4',
+      ogg: 'audio/ogg',
+      opus: 'audio/opus',
+      wav: 'audio/wav',
+      webm: 'audio/webm'
+    };
+
+    const mimeType = mimeTypes[extension.toLowerCase()];
+    if (!mimeType) {
+      throw new Error(
+        `Unsupported audio file extension ".${extension}". Supported: ${Object.keys(mimeTypes).join(', ')}`
+      );
+    }
+
+    return mimeType;
+  }
+
+  private async postS3Upload(url: string, fields: Record<string, unknown>, filePath: string, mimeType: string) {
+    const fileBuffer = await fs.readFile(filePath);
+    const form = new FormData();
+
+    for (const [key, value] of Object.entries(fields)) {
+      form.append(key, String(value));
+    }
+
+    form.append(
+      'file',
+      new Blob([new Uint8Array(fileBuffer)], { type: mimeType }),
+      path.basename(filePath)
+    );
+
+    const response = await fetch(url, {
+      method: 'POST',
+      body: form
+    });
+
+    if (!response.ok) {
+      throw new Error(`Suno S3 upload failed: ${response.status} ${response.statusText}`);
+    }
+  }
+
+  private async waitForAudioUpload(uploadId: string): Promise<any> {
+    const timeoutMs = Number(process.env.SUNO_UPLOAD_POLL_TIMEOUT_MS || 5 * 60 * 1000);
+    const pollIntervalMs = Number(process.env.SUNO_UPLOAD_POLL_INTERVAL_MS || 4000);
+    const startedAt = Date.now();
+    let lastUpload: any;
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const response = await this.client.get(
+        `${SunoApi.WEB_BASE_URL}/api/uploads/audio/${uploadId}/`
+      );
+      lastUpload = response.data;
+
+      if (lastUpload?.status === 'error') {
+        throw new Error(lastUpload.error_message || 'Suno audio upload processing failed');
+      }
+
+      if (lastUpload?.status === 'complete') {
+        return lastUpload;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+
+    throw new Error(
+      `Suno audio upload processing timed out. Last status: ${lastUpload?.status || 'unknown'}`
+    );
+  }
+
+  private async setAudioUploadMetadata(
+    clipId: string,
+    upload: any,
+    options: { title?: string; lyrics?: string }
+  ) {
+    const title = options.title || upload.title || 'Reference Audio';
+    const response = await this.client.post(
+      `${SunoApi.WEB_BASE_URL}/api/gen/${clipId}/set_metadata/`,
+      {
+        title,
+        image_url: upload.image_url,
+        lyrics: options.lyrics,
+        is_audio_upload_tos_accepted: true
+      }
+    );
+
+    const data = response.data;
+    if (!data || data.error_type) {
+      throw new Error(data?.error_type || 'Failed to set Suno upload metadata');
+    }
+
+    return data;
+  }
+
+  public async uploadAudioFile(
+    filePath: string,
+    options: { title?: string; lyrics?: string } = {}
+  ): Promise<SunoUploadedAudioInfo> {
+    const resolvedPath = path.isAbsolute(filePath)
+      ? filePath
+      : path.resolve(process.cwd(), filePath);
+    const stat = await fs.stat(resolvedPath);
+    if (!stat.isFile()) {
+      throw new Error(`Reference audio path is not a file: ${filePath}`);
+    }
+
+    const extension = path.extname(resolvedPath).replace(/^\./, '').toLowerCase();
+    const mimeType = this.getAudioMimeType(extension);
+    const fileName = path.basename(resolvedPath);
+
+    await this.keepAlive(false);
+
+    const uploadStart = await this.client.post(
+      `${SunoApi.WEB_BASE_URL}/api/uploads/audio/`,
+      {
+        extension,
+        is_stem_mix: false,
+        upload_type: 'file_upload'
+      },
+      { timeout: 10000 }
+    );
+
+    const uploadId = uploadStart.data?.id;
+    if (!uploadId || !uploadStart.data?.url || !uploadStart.data?.fields) {
+      throw new Error('Suno did not return audio upload parameters');
+    }
+
+    await this.postS3Upload(uploadStart.data.url, uploadStart.data.fields, resolvedPath, mimeType);
+
+    await this.client.post(
+      `${SunoApi.WEB_BASE_URL}/api/uploads/audio/${uploadId}/upload-finish/`,
+      {
+        upload_type: 'file_upload',
+        upload_filename: fileName
+      }
+    );
+
+    const upload = await this.waitForAudioUpload(uploadId);
+    const initialize = await this.client.post(
+      `${SunoApi.WEB_BASE_URL}/api/uploads/audio/${uploadId}/initialize-clip/`,
+      {}
+    );
+    const clipId = initialize.data?.clip_id;
+    if (!clipId) {
+      throw new Error('Suno uploaded audio did not initialize to a clip');
+    }
+
+    const metadata = await this.setAudioUploadMetadata(clipId, upload, options);
+
+    return {
+      upload_id: uploadId,
+      clip_id: clipId,
+      status: upload.status,
+      title: metadata.title || upload.title,
+      image_url: metadata.image_url || upload.image_url,
+      has_vocal: upload.has_vocal,
+      inferred_description: upload.inferred_description,
+      display_tags: upload.display_tags,
+      inferred_lyrics: upload.hoot_lyrics,
+      duration: upload.duration,
+      s3_id: upload.s3_id
+    };
+  }
+
+  private getReferenceContinueAt(upload: SunoUploadedAudioInfo, explicitContinueAt?: number) {
+    if (Number.isFinite(explicitContinueAt)) {
+      return Math.max(0, Number(explicitContinueAt));
+    }
+
+    const duration = Number(upload.duration);
+    if (Number.isFinite(duration) && duration > 0) {
+      return Math.max(1, Math.floor(duration * 0.7));
+    }
+
+    return 30;
+  }
+
+  private normalizeControlWeight(value: number | undefined, fallback: number) {
+    const resolved = Number.isFinite(value) ? Number(value) : fallback;
+    if (resolved <= 1) {
+      return Math.min(Math.max(resolved, 0), 1);
+    }
+
+    return Math.min(Math.max(resolved, 0), 100) / 100;
+  }
+
+  private mapGeneratedClip(audio: any): AudioInfo {
+    return {
+      id: audio.id,
+      title: audio.title,
+      image_url: audio.image_url,
+      lyric: audio.metadata?.prompt,
+      audio_url: audio.audio_url,
+      video_url: audio.video_url,
+      created_at: audio.created_at,
+      model_name: audio.model_name,
+      status: audio.status,
+      gpt_description_prompt: audio.metadata?.gpt_description_prompt,
+      prompt: audio.metadata?.prompt,
+      type: audio.metadata?.type,
+      tags: audio.metadata?.tags,
+      negative_tags: audio.metadata?.negative_tags,
+      duration: audio.metadata?.duration,
+      error_message: audio.metadata?.error_message
+    };
+  }
+
+  private async generateFromReferenceClip(
+    upload: SunoUploadedAudioInfo,
+    options: SunoReferenceGenerateOptions
+  ): Promise<AudioInfo[]> {
+    await this.keepAlive(false);
+
+    const referenceType = options.reference_type || 'extend';
+    const lyrics = options.lyrics || options.prompt || '';
+    const tags =
+      options.tags ||
+      upload.display_tags ||
+      upload.inferred_description ||
+      '';
+    const model = options.model || DEFAULT_MODEL;
+    const token = await this.getCaptcha();
+    const createSessionToken = await this.getSessionToken().catch(() => undefined);
+    const metadata: Record<string, unknown> = {
+      web_client_pathname: '/create',
+      is_max_mode: undefined,
+      is_mumble: false,
+      create_mode: 'custom',
+      create_session_token: createSessionToken,
+      disable_volume_normalization: false,
+      control_sliders: {
+        audio_weight: this.normalizeControlWeight(options.audio_weight, 65)
+      },
+      is_remix: true,
+      lyrics_updated: false
+    };
+
+    const payload: any = {
+      project_id: undefined,
+      transaction_uuid: randomUUID(),
+      token,
+      token_provider: token ? 1 : null,
+      task: referenceType === 'extend' ? 'upload_extend' : 'cover',
+      generation_type: 'TEXT',
+      title: options.title || upload.title || 'Reference Track',
+      tags,
+      negative_tags: options.negative_tags || '',
+      mv: model,
+      prompt: lyrics,
+      gpt_description_prompt: undefined,
+      make_instrumental: Boolean(options.make_instrumental),
+      user_uploaded_images_b64: null,
+      metadata,
+      override_fields: [],
+      cover_clip_id: null,
+      cover_start_s: null,
+      cover_end_s: null,
+      persona_id: null,
+      artist_clip_id: null,
+      artist_start_s: null,
+      artist_end_s: null,
+      continue_clip_id: null,
+      continued_aligned_prompt: null,
+      continue_at: null,
+      infill_context_start_s: undefined,
+      infill_context_end_s: undefined,
+      infill_start_s: undefined,
+      infill_end_s: undefined,
+      infill_dur_s: undefined,
+      stem_type_id: undefined,
+      stem_type_group_name: undefined,
+      stem_task: undefined,
+      stem_name: undefined
+    };
+
+    if (referenceType === 'extend') {
+      payload.continue_clip_id = upload.clip_id;
+      payload.continue_at = this.getReferenceContinueAt(upload, options.continue_at);
+      payload.continued_aligned_prompt = '';
+    } else {
+      payload.cover_clip_id = upload.clip_id;
+    }
+
+    logger.info(
+      'generateFromReferenceClip payload:\n' +
+        JSON.stringify(
+          {
+            reference_type: referenceType,
+            title: payload.title,
+            tags: payload.tags,
+            mv: payload.mv,
+            task: payload.task,
+            continue_clip_id: payload.continue_clip_id,
+            continue_at: payload.continue_at,
+            cover_clip_id: payload.cover_clip_id,
+            metadata: payload.metadata
+          },
+          null,
+          2
+        )
+    );
+
+    const response = await this.client.post(
+      `${SunoApi.WEB_BASE_URL}/api/generate/v2-web/`,
+      payload,
+      { timeout: 10000 }
+    );
+
+    if (response.status !== 200) {
+      throw new Error('Error response:' + response.statusText);
+    }
+
+    const clips = response.data?.clips;
+    if (!Array.isArray(clips)) {
+      throw new Error('Suno reference generation returned no clips');
+    }
+
+    const audios = clips.map((audio: any) => this.mapGeneratedClip(audio));
+    if (options.wait_audio) {
+      const songIds = audios.map((audio) => audio.id);
+      const startTime = Date.now();
+      let lastResponse: AudioInfo[] = audios;
+      await sleep(5, 5);
+      while (Date.now() - startTime < 100000) {
+        const refreshed = await this.get(songIds);
+        const allCompleted = refreshed.every(
+          (audio) => audio.status === 'streaming' || audio.status === 'complete'
+        );
+        const allError = refreshed.every((audio) => audio.status === 'error');
+        if (allCompleted || allError) {
+          return refreshed;
+        }
+        lastResponse = refreshed;
+        await sleep(3, 6);
+        await this.keepAlive(true);
+      }
+      return lastResponse;
+    }
+
+    return audios;
+  }
+
+  public async generateReferenceAudio(
+    options: SunoReferenceGenerateOptions
+  ): Promise<SunoReferenceGenerateResult> {
+    const upload = await this.uploadAudioFile(options.reference_audio_path, {
+      title: options.title,
+      lyrics: options.lyrics || options.prompt
+    });
+    const clips = await this.generateFromReferenceClip(upload, options);
+
+    return { upload, clips };
   }
 
   private async captchaRequired(): Promise<boolean> {
@@ -950,7 +1344,7 @@ export const sunoApi = async (cookie?: string) => {
 
   // Check if the instance for this cookie already exists in the cache
   const cachedInstance = cache.get(resolvedCookie);
-  if (cachedInstance)
+  if (cachedInstance && typeof (cachedInstance as any).generateReferenceAudio === 'function')
     return cachedInstance;
 
   // If not, create a new instance and initialize it

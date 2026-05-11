@@ -83,6 +83,37 @@ public/mv-assets/audio/
 
 That directory is ignored by Git.
 
+## Generate With Reference Audio
+
+Use this when the music should follow a local audio reference more closely than a text-only style prompt. This is an additive route; `/api/mv/generate_music` remains the text-only path.
+
+For a standalone handoff guide, see [codex-suno-reference-audio.md](codex-suno-reference-audio.md).
+
+`reference_audio_path` can be absolute or relative to the repository root. Supported formats include `mp3`, `wav`, `flac`, `m4a`, `aac`, `ogg`, `opus`, `webm`, and `mp4`.
+
+```bash
+curl -X POST "$BASE_URL/api/mv/reference_music" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: $KEY" \
+  -d '{
+    "mv_project_id": "mv-reference-test",
+    "reference_audio_path": "public/mv-assets/audio/reference.mp3",
+    "reference_type": "extend",
+    "title": "Reference Track Test",
+    "lyrics": "[Verse]\nWrite original lyrics here\n\n[Chorus]\nWrite a strong original hook here",
+    "style": "Chinese heavy rock, powerful Mandarin male vocal, dramatic guitar riffs, strong live drums, heroic chorus",
+    "audio_weight": 65,
+    "include_aligned_lyrics": false
+  }'
+```
+
+Useful fields:
+
+- `reference_type: "extend"` uses uploaded audio as continuation context. This is the default and usually the closest to reference audio.
+- `reference_type: "cover"` uses the uploaded clip as a cover/remix reference.
+- `continue_at` optionally sets the reference timestamp for extend. If omitted, the API uses about 70% of the uploaded audio duration, or 30 seconds if duration is unavailable.
+- `audio_weight` accepts `0-100` or `0-1`; higher means stronger reference-audio influence.
+
 ## Stable Fallback: Import Latest Suno Tracks
 
 If direct generation is blocked by Suno human verification, do not fight the verification flow. Ask the human to generate in the normal Suno web UI, then import the latest completed tracks:

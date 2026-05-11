@@ -15,6 +15,10 @@ export interface MvMusicInput {
   negative_tags?: string;
   model?: string;
   include_aligned_lyrics?: boolean;
+  reference_audio_path?: string;
+  reference_type?: 'extend' | 'cover';
+  continue_at?: number;
+  audio_weight?: number;
   metadata?: Record<string, unknown>;
 }
 
