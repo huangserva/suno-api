@@ -10,6 +10,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:mv": "node scripts/dev-with-suno-cookie.mjs",
+    "suno:cookie": "node scripts/ensure-suno-cookie.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"

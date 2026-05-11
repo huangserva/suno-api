@@ -19,6 +19,7 @@ globalForSunoApi.sunoApiCache = cache;
 
 const logger = pino();
 export const DEFAULT_MODEL = 'chirp-v3-5';
+const MANUAL_CAPTCHA_PROFILE_DIR = path.join(process.cwd(), '.data', 'suno-manual-captcha-profile');
 
 export interface AudioInfo {
   id: string; // Unique identifier for the audio
@@ -257,7 +258,7 @@ class SunoApi {
    * Launches a browser with the necessary cookies
    * @returns {BrowserContext}
    */
-  private async launchBrowser(): Promise<BrowserContext> {
+  private async launchBrowser(options?: { headless?: boolean }): Promise<BrowserContext> {
     const args = [
       '--disable-blink-features=AutomationControlled',
       '--disable-web-security',
@@ -273,13 +274,45 @@ class SunoApi {
       args.push('--enable-unsafe-swiftshader',
         '--disable-gpu',
         '--disable-setuid-sandbox');
-    const browser = await this.getBrowserType().launch({
-      args,
-      headless: yn(process.env.BROWSER_HEADLESS, { default: true })
-    });
-    const context = await browser.newContext({ userAgent: this.userAgent, locale: process.env.BROWSER_LOCALE, viewport: null });
+    let context: BrowserContext;
+    if (options?.headless === false) {
+      await fs.mkdir(MANUAL_CAPTCHA_PROFILE_DIR, { recursive: true });
+      context = await this.getBrowserType().launchPersistentContext(
+        MANUAL_CAPTCHA_PROFILE_DIR,
+        {
+          args,
+          headless: false,
+          userAgent: this.userAgent,
+          locale: process.env.BROWSER_LOCALE,
+          viewport: { width: 1440, height: 1000 }
+        }
+      );
+    } else {
+      const browser = await this.getBrowserType().launch({
+        args,
+        headless: yn(process.env.BROWSER_HEADLESS, { default: true })
+      });
+      context = await browser.newContext({
+        userAgent: this.userAgent,
+        locale: process.env.BROWSER_LOCALE,
+        viewport: { width: 1440, height: 1000 }
+      });
+    }
     const cookies = [];
     const lax: 'Lax' | 'Strict' | 'None' = 'Lax';
+    for (const key in this.cookies) {
+      const value = this.cookies[key];
+      if (!value || key === '__session') {
+        continue;
+      }
+      cookies.push({
+        name: key,
+        value: value + '',
+        domain: '.suno.com',
+        path: '/',
+        sameSite: lax
+      })
+    }
     cookies.push({
       name: '__session',
       value: this.currentToken+'',
@@ -287,16 +320,13 @@ class SunoApi {
       path: '/',
       sameSite: lax
     });
-    for (const key in this.cookies) {
-      cookies.push({
-        name: key,
-        value: this.cookies[key]+'',
-        domain: '.suno.com',
-        path: '/',
-        sameSite: lax
-      })
+    for (const browserCookie of cookies) {
+      try {
+        await context.addCookies([browserCookie]);
+      } catch (error: any) {
+        logger.info(`Skipping browser cookie ${browserCookie.name}: ${error.message}`);
+      }
     }
-    await context.addCookies(cookies);
     return context;
   }
 
@@ -308,8 +338,22 @@ class SunoApi {
     if (!await this.captchaRequired())
       return null;
 
-    logger.info('CAPTCHA required. Launching browser...')
-    const browser = await this.launchBrowser();
+    const hasCaptchaSolver = Boolean(process.env.TWOCAPTCHA_KEY?.trim());
+    const allowManualVerification = yn(process.env.SUNO_MANUAL_VERIFICATION, {
+      default: false
+    });
+    if (!hasCaptchaSolver && !allowManualVerification) {
+      throw new Error(
+        'Suno requires human verification before generation. Generate in the normal Suno web app, then POST /api/mv/import_latest to sync the latest tracks, or set SUNO_MANUAL_VERIFICATION=true to try the manual verification browser.'
+      );
+    }
+
+    logger.info(`CAPTCHA required. Launching ${hasCaptchaSolver ? 'solver' : 'manual'} browser...`)
+    const browser = await this.launchBrowser({ headless: hasCaptchaSolver ? undefined : false });
+    const closeBrowser = async () => {
+      await browser.close().catch(() => undefined);
+      await browser.browser()?.close().catch(() => undefined);
+    };
     const page = await browser.newPage();
     await page.goto('https://suno.com/create', { referer: 'https://www.google.com/', waitUntil: 'domcontentloaded', timeout: 0 });
 
@@ -320,20 +364,82 @@ class SunoApi {
     if (this.ghostCursorEnabled)
       this.cursor = await createCursor(page);
     
+    const controller = new AbortController();
+    const tokenPromise = new Promise<string|null>((resolve, reject) => {
+      page.route('**/api/generate**', async (route: any) => {
+        try {
+          if (route.request().method() !== 'POST') {
+            return route.continue();
+          }
+          logger.info('hCaptcha token received. Closing browser');
+          await route.abort();
+          await closeBrowser();
+          controller.abort();
+          const request = route.request();
+          this.currentToken = request.headers().authorization.split('Bearer ').pop();
+          const token = request.postDataJSON()?.token;
+          if (!token) {
+            reject(new Error('Suno generate request did not include an hCaptcha token.'));
+            return;
+          }
+          resolve(token);
+        } catch(err) {
+          reject(err);
+        }
+      });
+    });
+
     logger.info('Triggering the CAPTCHA');
     try {
       await page.getByLabel('Close').click({ timeout: 2000 }); // close all popups
       // await this.click(page, { x: 318, y: 13 });
     } catch(e) {}
 
-    const textarea = page.locator('.custom-textarea');
+    let textarea = page.locator('.custom-textarea:visible').first();
+    if ((await page.locator('.custom-textarea').count()) === 0) {
+      textarea = page.locator('textarea:visible').first();
+    }
+    if ((await textarea.count()) === 0) {
+      textarea = page.locator('textarea').last();
+    }
+    await textarea.waitFor({ timeout: 30000 });
     await this.click(textarea);
     await textarea.pressSequentially('Lorem ipsum', { delay: 80 });
 
-    const button = page.locator('button[aria-label="Create"]').locator('div.flex');
-    this.click(button);
+    let button = page.locator('button[aria-label="Create song"]').first();
+    if ((await button.count()) === 0) {
+      button = page.locator('button[aria-label="Create"]').first();
+    }
+    if ((await button.count()) === 0) {
+      button = page.getByRole('button', { name: /Create/ }).first();
+    }
+    await button.waitFor({ timeout: 30000 });
+    await page.waitForFunction(() => {
+      const buttons = Array.from(document.querySelectorAll('button'));
+      const createButton = buttons.find(button => {
+        const label = button.getAttribute('aria-label') || '';
+        const text = (button.textContent || '').trim();
+        return label === 'Create song' || label === 'Create' || text === 'Create';
+      });
+      return Boolean(createButton && !createButton.disabled);
+    }, undefined, { timeout: 30000 });
+    await button.scrollIntoViewIfNeeded();
+    await this.click(button);
 
-    const controller = new AbortController();
+    if (!hasCaptchaSolver) {
+      logger.info('Manual verification mode. Complete the verification in the opened Suno browser window.');
+      const timeoutMs = Number(process.env.SUNO_MANUAL_CAPTCHA_TIMEOUT_MS || 5 * 60 * 1000);
+      return Promise.race([
+        tokenPromise,
+        new Promise<null>((_, reject) => {
+          setTimeout(() => {
+            closeBrowser();
+            reject(new Error(`Manual Suno verification was not completed within ${Math.round(timeoutMs / 1000)} seconds.`));
+          }, timeoutMs);
+        })
+      ]);
+    }
+
     new Promise<void>(async (resolve, reject) => {
       const frame = page.frameLocator('iframe[title*="hCaptcha"]');
       const challenge = frame.locator('.challenge-container');
@@ -408,24 +514,10 @@ class SunoApi {
           reject(e);
       }
     }).catch(e => {
-      browser.browser()?.close();
+      closeBrowser();
       throw e;
     });
-    return (new Promise((resolve, reject) => {
-      page.route('**/api/generate/v2/**', async (route: any) => {
-        try {
-          logger.info('hCaptcha token received. Closing browser');
-          route.abort();
-          browser.browser()?.close();
-          controller.abort();
-          const request = route.request();
-          this.currentToken = request.headers().authorization.split('Bearer ').pop();
-          resolve(request.postDataJSON().token);
-        } catch(err) {
-          reject(err);
-        }
-      });
-    }));
+    return tokenPromise;
   }
 
   /**

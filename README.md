@@ -100,20 +100,38 @@ docker compose build && docker compose up
 - If deployed to Vercel, please add the environment variables in the Vercel dashboard.
 
 - If you’re running this locally, be sure to add the following to your `.env` file:
+  You can start from `.env.example`.
 #### Environment variables
 - `SUNO_COOKIE` — the `Cookie` header you obtained in the first step.
+- `INTERNAL_API_KEY` — required by all `/api/*` and `/v1/*` routes. Send it as `x-api-key` or `Authorization: Bearer <key>`.
 - `TWOCAPTCHA_KEY` — your 2Captcha API key from the second step.
+- `SUNO_MANUAL_VERIFICATION` — optional. Set to `true` only if you want the app to open a manual Suno verification browser when generation is blocked.
 - `BROWSER` — the name of the browser that is going to be used to solve the CAPTCHA. Only `chromium` and `firefox` supported.
 - `BROWSER_GHOST_CURSOR` — use ghost-cursor-playwright to simulate smooth mouse movements. Please note that it doesn't seem to make any difference in the rate of CAPTCHAs, so you can set it to `false`. Retained for future testing.
 - `BROWSER_LOCALE` — the language of the browser. Using either `en` or `ru` is recommended, since those have the most workers on 2Captcha. [List of supported languages](https://2captcha.com/2captcha-api#language)
 - `BROWSER_HEADLESS` — run the browser without the window. You probably want to set this to `true`.
 ```bash
 SUNO_COOKIE=<…>
+INTERNAL_API_KEY=<…>
 TWOCAPTCHA_KEY=<…>
+SUNO_MANUAL_VERIFICATION=false
 BROWSER=chromium
 BROWSER_GHOST_CURSOR=false
 BROWSER_LOCALE=en
 BROWSER_HEADLESS=true
+```
+
+You can also let the project capture `SUNO_COOKIE` from a dedicated local browser session:
+
+```bash
+npm run suno:cookie
+```
+
+The script opens `https://suno.com/create` in a project-owned browser profile. Log in once there, and it writes `SUNO_COOKIE` to `.env` without printing it. It does not read your normal Chrome/Safari profile. To start the dev server with this check built in:
+On every run, the script validates the existing cookie against Suno auth first. If the cookie is missing or expired, it opens the login browser once; if it cannot capture a usable cookie, startup fails with an error instead of running with a broken login.
+
+```bash
+npm run dev:mv
 ```
 
 ### 5. Run suno-api
@@ -122,8 +140,8 @@ BROWSER_HEADLESS=true
   - Please click on Deploy in the Vercel dashboard and wait for the deployment to be successful.
   - Visit the `https://<vercel-assigned-domain>/api/get_limit` API for testing.
 - If running locally:
-  - Run `npm run dev`.
-  - Visit the `http://localhost:3000/api/get_limit` API for testing.
+  - Run `npm run dev:mv`.
+  - Test the API with `curl -H "x-api-key: <your-internal-api-key>" http://localhost:3000/api/get_limit`.
 - If the following result is returned:
 
 ```json
@@ -159,9 +177,62 @@ Suno API currently mainly implements the following APIs:
 - `/api/get_aligned_lyrics`: Get list of timestamps for each word in the lyrics
 - `/api/clip`: Get clip information based on ID passed as query parameter `id`
 - `/api/concat`: Generate the whole song from extensions
+- `/api/mv/generate_music`: Create an internal MV music task
+- `/api/mv/import_latest`: Import the latest tracks from your Suno account and download local audio assets
+- `/api/mv/tasks`: List internal MV music tasks
+- `/api/mv/tasks/{id}`: Refresh and fetch an internal MV music task
+- `/api/mv/projects/{mv_project_id}`: Fetch the latest music task and ready-to-use assets for an MV project
 ```
 
 You can also specify the cookies in the `Cookie` header of your request, overriding the default cookies in the `SUNO_COOKIE` environment variable. This comes in handy when, for example, you want to use multiple free accounts at the same time.
+
+## Internal MV workflow
+
+This fork includes a local-first workflow for MV production. Generated task metadata is stored in `.data/mv-tasks.json`, and finished audio files are downloaded to `public/mv-assets/audio`.
+
+Create a task through Suno generation:
+
+> If Suno requires human verification and `TWOCAPTCHA_KEY` is not configured, generation fails with a clear error. For low-volume personal use, generate in the normal Suno web UI and import the latest tracks with `/api/mv/import_latest`.
+
+```bash
+curl -X POST http://localhost:3000/api/mv/generate_music \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: <your-internal-api-key>" \
+  -d '{
+    "mv_project_id": "mv-001",
+    "title": "Demo MV Track",
+    "lyrics": "Verse and chorus lyrics here",
+    "style": "cinematic pop, emotional, 90 bpm",
+    "include_aligned_lyrics": true
+  }'
+```
+
+After generating in the Suno web UI, import the latest tracks into an MV project:
+
+```bash
+curl -X POST http://localhost:3000/api/mv/import_latest \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: <your-internal-api-key>" \
+  -d '{
+    "mv_project_id": "mv-001",
+    "limit": 2,
+    "ready_only": true
+  }'
+```
+
+Poll the task until it is `complete`:
+
+```bash
+curl -H "x-api-key: <your-internal-api-key>" \
+  http://localhost:3000/api/mv/tasks/<task-id>
+```
+
+Fetch the project-level payload for your MV pipeline:
+
+```bash
+curl -H "x-api-key: <your-internal-api-key>" \
+  http://localhost:3000/api/mv/projects/mv-001
+```
 
 For more detailed documentation, please check out the demo site:
 [suno.gcui.ai/docs](https://suno.gcui.ai/docs)

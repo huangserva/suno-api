@@ -81,10 +81,30 @@ docker compose build && docker compose up
 ### 3. 配置 suno-api
 
 - 如果部署到了 Vercel，请在 Vercel 后台，添加环境变量 `SUNO_COOKIE`，值为第一步获取的 cookie。
-- 如果在本地运行，请在 .env 文件中添加：
+- 如果在本地运行，请在 `.env` 文件中添加；可以先复制 `.env.example`。
 
 ```bash
 SUNO_COOKIE=<your-cookie>
+INTERNAL_API_KEY=<your-internal-api-key>
+SUNO_MANUAL_VERIFICATION=false
+```
+
+所有 `/api/*` 和 `/v1/*` 接口都需要内部鉴权。请求时传 `x-api-key: <your-internal-api-key>`，或传 `Authorization: Bearer <your-internal-api-key>`。
+
+没有配置 `TWOCAPTCHA_KEY` 时，默认不会弹出自动化浏览器处理 Suno 人机验证。自用低频场景建议在正常 Suno 网页生成，再用 `/api/mv/import_latest` 同步。
+
+也可以让项目用专用本地浏览器自动获取 `SUNO_COOKIE`：
+
+```bash
+npm run suno:cookie
+```
+
+脚本会打开 `https://suno.com/create`，你只需要在这个项目专用浏览器里登录一次。登录后脚本自动把 `SUNO_COOKIE` 写入 `.env`，不会打印 Cookie，也不会读取你的日常 Chrome/Safari Profile。日常开发启动可以直接用：
+
+每次启动时，脚本会先用 Suno auth 验证已有 Cookie 是否可用。缺失或过期时会自动打开登录浏览器重新获取一次；如果没拿到可用 Cookie，就直接报错并停止启动，不会带着坏登录态运行。
+
+```bash
+npm run dev:mv
 ```
 
 ### 4. 运行 suno api
@@ -93,8 +113,8 @@ SUNO_COOKIE=<your-cookie>
   - 请在 Vercel 后台，点击 `Deploy`，等待部署成功。
   - 访问 `https://<vercel分配的域名>/api/get_limit` API 进行测试
 - 如果在本地运行：
-  - 请运行 `npm run dev`
-  - 访问 `http://localhost:3000/api/get_limit` API 进行测试
+  - 请运行 `npm run dev:mv`
+  - 使用 `curl -H "x-api-key: <your-internal-api-key>" http://localhost:3000/api/get_limit` 测试 API
 - 如果返回以下结果：
 
 ```json
@@ -128,6 +148,59 @@ Suno API 目前主要实现了以下 API:
 - `/api/get_aligned_lyrics`: 获取歌词中每个单词的时间戳列表
 - `/api/clip`: 检索特定音乐的信息
 - `/api/concat`: 合并音乐，将扩展后的音乐和原始音乐合并
+- `/api/mv/generate_music`: 创建内部 MV 音乐任务
+- `/api/mv/import_latest`: 从 Suno 账号同步最新歌曲并下载音频资产
+- `/api/mv/tasks`: 查看内部 MV 音乐任务列表
+- `/api/mv/tasks/{id}`: 刷新并查看内部 MV 音乐任务
+- `/api/mv/projects/{mv_project_id}`: 获取 MV 项目的最新音乐任务和可直接使用的资产
+```
+
+## 内部 MV 工作流
+
+这个 fork 增加了一套本地优先的 MV 音乐任务流。任务数据保存到 `.data/mv-tasks.json`，生成完成后的音频会下载到 `public/mv-assets/audio`。
+
+直接请求 Suno 生成任务：
+
+> 如果 Suno 要求人机验证，且没有配置 `TWOCAPTCHA_KEY`，接口会直接报错。自用低频场景建议在正常 Suno 网页生成歌曲，然后用 `/api/mv/import_latest` 同步回来。
+
+```bash
+curl -X POST http://localhost:3000/api/mv/generate_music \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: <your-internal-api-key>" \
+  -d '{
+    "mv_project_id": "mv-001",
+    "title": "Demo MV Track",
+    "lyrics": "这里填写歌词",
+    "style": "cinematic pop, emotional, 90 bpm",
+    "include_aligned_lyrics": true
+  }'
+```
+
+从 Suno 网页生成后，同步最新歌曲到 MV 项目：
+
+```bash
+curl -X POST http://localhost:3000/api/mv/import_latest \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: <your-internal-api-key>" \
+  -d '{
+    "mv_project_id": "mv-001",
+    "limit": 2,
+    "ready_only": true
+  }'
+```
+
+轮询任务直到 `status` 变成 `complete`：
+
+```bash
+curl -H "x-api-key: <your-internal-api-key>" \
+  http://localhost:3000/api/mv/tasks/<task-id>
+```
+
+给 MV 生成链路读取项目级结果：
+
+```bash
+curl -H "x-api-key: <your-internal-api-key>" \
+  http://localhost:3000/api/mv/projects/mv-001
 ```
 
 详细文档请查看演示站点:
