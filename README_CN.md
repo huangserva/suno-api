@@ -159,6 +159,8 @@ Suno API 目前主要实现了以下 API:
 
 这个 fork 增加了一套本地优先的 MV 音乐任务流。任务数据保存到 `.data/mv-tasks.json`，生成完成后的音频会下载到 `public/mv-assets/audio`。
 
+给 Codex/Agent 交接使用的流程文档见：[docs/codex-suno-workflow.md](docs/codex-suno-workflow.md)。
+
 直接请求 Suno 生成任务：
 
 > 如果 Suno 要求人机验证，且没有配置 `TWOCAPTCHA_KEY`，接口会直接报错。自用低频场景建议在正常 Suno 网页生成歌曲，然后用 `/api/mv/import_latest` 同步回来。

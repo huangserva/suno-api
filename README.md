@@ -190,6 +190,8 @@ You can also specify the cookies in the `Cookie` header of your request, overrid
 
 This fork includes a local-first workflow for MV production. Generated task metadata is stored in `.data/mv-tasks.json`, and finished audio files are downloaded to `public/mv-assets/audio`.
 
+For Codex/agent handoff instructions, see [docs/codex-suno-workflow.md](docs/codex-suno-workflow.md).
+
 Create a task through Suno generation:
 
 > If Suno requires human verification and `TWOCAPTCHA_KEY` is not configured, generation fails with a clear error. For low-volume personal use, generate in the normal Suno web UI and import the latest tracks with `/api/mv/import_latest`.
