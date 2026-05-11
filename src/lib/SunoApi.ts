@@ -18,7 +18,7 @@ const cache = globalForSunoApi.sunoApiCache || new Map<string, SunoApi>();
 globalForSunoApi.sunoApiCache = cache;
 
 const logger = pino();
-export const DEFAULT_MODEL = 'chirp-v3-5';
+export const DEFAULT_MODEL = 'chirp-fenix';
 const MANUAL_CAPTCHA_PROFILE_DIR = path.join(process.cwd(), '.data', 'suno-manual-captcha-profile');
 
 export interface AudioInfo {
