@@ -4,7 +4,12 @@ import path from 'node:path';
 interface DownloadedAudioAsset {
   local_audio_url: string;
   local_audio_path: string;
+  local_audio_source_url: string;
   audio_downloaded_at: string;
+}
+
+interface DownloadAudioAssetOptions {
+  overwrite?: boolean;
 }
 
 const assetRoot = path.join(process.cwd(), 'public', 'mv-assets');
@@ -29,7 +34,8 @@ const getAudioExtension = (audioUrl: string) => {
 export const ensureAudioAsset = async (
   taskId: string,
   clipId: string,
-  audioUrl: string
+  audioUrl: string,
+  options: DownloadAudioAssetOptions = {}
 ): Promise<DownloadedAudioAsset> => {
   const parsedUrl = new URL(audioUrl);
   if (parsedUrl.protocol !== 'https:') {
@@ -45,15 +51,18 @@ export const ensureAudioAsset = async (
   const localAudioPath = path.join(audioAssetDir, fileName);
   const localAudioUrl = `/mv-assets/audio/${fileName}`;
 
-  try {
-    await fs.access(localAudioPath);
-    return {
-      local_audio_url: localAudioUrl,
-      local_audio_path: path.relative(process.cwd(), localAudioPath),
-      audio_downloaded_at: new Date().toISOString()
-    };
-  } catch {
-    // Continue and download the file.
+  if (!options.overwrite) {
+    try {
+      await fs.access(localAudioPath);
+      return {
+        local_audio_url: localAudioUrl,
+        local_audio_path: path.relative(process.cwd(), localAudioPath),
+        local_audio_source_url: audioUrl,
+        audio_downloaded_at: new Date().toISOString()
+      };
+    } catch {
+      // Continue and download the file.
+    }
   }
 
   const response = await fetch(audioUrl);
@@ -67,6 +76,7 @@ export const ensureAudioAsset = async (
   return {
     local_audio_url: localAudioUrl,
     local_audio_path: path.relative(process.cwd(), localAudioPath),
+    local_audio_source_url: audioUrl,
     audio_downloaded_at: new Date().toISOString()
   };
 };

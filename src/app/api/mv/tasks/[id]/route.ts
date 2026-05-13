@@ -24,8 +24,24 @@ const isReadyForLocalUse = (task: Awaited<ReturnType<typeof getMvTask>>) => {
 
   return (
     task.status === 'complete' &&
-    task.clips.every((clip) => Boolean(clip.local_audio_url))
+    task.clips.every(
+      (clip) =>
+        Boolean(clip.local_audio_url) &&
+        isStableAudioSource(clip.local_audio_source_url || clip.audio_url)
+    )
   );
+};
+
+const isStableAudioSource = (audioUrl?: string) => {
+  if (!audioUrl) {
+    return false;
+  }
+
+  try {
+    return !new URL(audioUrl).hostname.includes('audiopipe');
+  } catch {
+    return false;
+  }
 };
 
 export async function GET(req: NextRequest, { params }: RouteContext) {

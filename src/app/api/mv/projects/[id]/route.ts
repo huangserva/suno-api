@@ -16,7 +16,23 @@ interface RouteContext {
 const isTaskReady = (task: MvMusicTask) =>
   task.status === 'complete' &&
   task.clips.length > 0 &&
-  task.clips.every((clip) => Boolean(clip.local_audio_url));
+  task.clips.every(
+    (clip) =>
+      Boolean(clip.local_audio_url) &&
+      isStableAudioSource(clip.local_audio_source_url || clip.audio_url)
+  );
+
+const isStableAudioSource = (audioUrl?: string) => {
+  if (!audioUrl) {
+    return false;
+  }
+
+  try {
+    return !new URL(audioUrl).hostname.includes('audiopipe');
+  } catch {
+    return false;
+  }
+};
 
 const toProjectResponse = (mvProjectId: string, tasks: MvMusicTask[]) => {
   const latestTask = tasks[0] ?? null;
@@ -35,6 +51,7 @@ const toProjectResponse = (mvProjectId: string, tasks: MvMusicTask[]) => {
         audio_url: clip.audio_url,
         local_audio_url: clip.local_audio_url,
         local_audio_path: clip.local_audio_path,
+        local_audio_source_url: clip.local_audio_source_url,
         image_url: clip.image_url,
         video_url: clip.video_url,
         lyric: clip.lyric,

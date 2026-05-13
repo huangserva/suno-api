@@ -39,6 +39,7 @@ export interface MvClipRecord {
   error_message?: string;
   local_audio_url?: string;
   local_audio_path?: string;
+  local_audio_source_url?: string;
   audio_downloaded_at?: string;
   asset_error?: string;
   aligned_lyrics?: unknown;
@@ -66,6 +67,18 @@ const dataDir = path.join(process.cwd(), '.data');
 const taskStorePath = path.join(dataDir, 'mv-tasks.json');
 
 let writeQueue: Promise<unknown> = Promise.resolve();
+
+const isStableAudioSource = (audioUrl?: string) => {
+  if (!audioUrl) {
+    return false;
+  }
+
+  try {
+    return !new URL(audioUrl).hostname.includes('audiopipe');
+  } catch {
+    return false;
+  }
+};
 
 const ensureStore = async () => {
   await fs.mkdir(dataDir, { recursive: true });
@@ -121,7 +134,10 @@ export const inferMvTaskStatus = (clips: MvClipRecord[]): MvTaskStatus => {
     const isSunoComplete =
       clip.status === 'streaming' || clip.status === 'complete';
     const localAssetReady = Boolean(clip.local_audio_url);
-    return isSunoComplete && localAssetReady;
+    const stableLocalSource = isStableAudioSource(
+      clip.local_audio_source_url || clip.audio_url
+    );
+    return isSunoComplete && localAssetReady && stableLocalSource;
   });
 
   if (allAudioReady) {
