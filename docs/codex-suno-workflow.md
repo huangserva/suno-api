@@ -38,6 +38,8 @@ curl -H "x-api-key: $KEY" "$BASE_URL/api/get_limit"
 
 Use abstract style language. Do not ask for an exact clone of a living artist or band; describe musical traits instead.
 
+For reusable style templates, see [suno-style-recipes.md](suno-style-recipes.md).
+
 ```bash
 curl -X POST "$BASE_URL/api/mv/generate_music" \
   -H "Content-Type: application/json" \
