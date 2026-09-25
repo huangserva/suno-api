@@ -1,8 +1,8 @@
 import axios, { AxiosInstance } from 'axios';
 import UserAgent from 'user-agents';
-import pino from 'pino';
 import yn from 'yn';
 import { isPage, sleep, waitForRequests } from '@/lib/utils';
+import { logger } from '@/lib/logger';
 import * as cookie from 'cookie';
 import { randomUUID } from 'node:crypto';
 import { Solver } from '@2captcha/captcha-solver';
@@ -17,7 +17,6 @@ const globalForSunoApi = global as unknown as { sunoApiCache?: Map<string, SunoA
 const cache = globalForSunoApi.sunoApiCache || new Map<string, SunoApi>();
 globalForSunoApi.sunoApiCache = cache;
 
-const logger = pino();
 // chirp-goose is the free-tier Suno v6 model. Override with SUNO_MODEL (e.g. a paid model id).
 export const DEFAULT_MODEL = process.env.SUNO_MODEL || 'chirp-goose';
 const MANUAL_CAPTCHA_PROFILE_DIR = path.join(process.cwd(), '.data', 'suno-manual-captcha-profile');

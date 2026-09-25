@@ -1,6 +1,6 @@
 ---
 name: suno-songwriter
-description: Write a Suno v6 song (title, style prompt, negative prompt, structured lyrics) and actually generate it through this repo's local suno-api (Docker or `npm run dev:mv`). Use when the user asks to make, write, compose or generate a song / music / BGM / MV track with Suno.
+description: Write a Suno v6 song (title, style prompt, negative prompt, structured lyrics) and actually generate it through this repo's `suno` MCP tools or the local suno-api HTTP server. Use when the user asks to make, write, compose or generate a song / music / BGM / MV track with Suno.
 ---
 
 # Suno Songwriter (v6)
@@ -10,6 +10,11 @@ This skill does two things: **writes a good prompt** (the part that decides qual
 Default model is `chirp-goose` (Suno v6, free tier). Override per request with `"model"` or globally with `SUNO_MODEL` in `.env`.
 
 ## 0. Preconditions
+
+**If the `suno` MCP tools are available (`suno_generate_song`, `suno_get_task`, ...), use them and skip the curl steps below**: `suno_get_credits` to check login/credits (`suno_login` if it fails), write the fields per section 2, call `suno_generate_song` with `wait_seconds: 240`, and report the returned `local_audio_path`s. See `docs/mcp.md`.
+
+Otherwise use the HTTP API:
+
 
 - Run from repo root. The API must be running: `docker compose up -d` or `npm run dev:mv`.
 - `.env` has `SUNO_COOKIE` and `INTERNAL_API_KEY`. The user logs in to suno.com once; `npm run dev:mv` refreshes the cookie via a login browser if it expired.

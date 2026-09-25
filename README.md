@@ -395,6 +395,10 @@ main();
 
 ## Integration with Custom Agents
 
+### MCP (Claude Code, Claude Desktop, Cursor, ...)
+
+Run `node mcp/index.mjs` as a stdio MCP server — real generation through the same code as this API, no Docker or Next.js needed. See [docs/mcp.md](docs/mcp.md).
+
 You can integrate Suno AI as a tool/plugin/action into your AI agent.
 
 ### Integration with GPTs

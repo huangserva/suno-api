@@ -348,6 +348,10 @@ main();
 
 ## 集成到到常见的自定义 Agent 中
 
+### MCP（Claude Code、Claude Desktop、Cursor 等）
+
+用 `node mcp/index.mjs` 作为 stdio MCP server 启动。它和 HTTP API 走同一套代码，真实调用 Suno 生成并下载音频，不需要 Docker 或 Next.js。详见 [docs/mcp.md](docs/mcp.md)。
+
 你可以把 suno ai 当做一个 工具/插件/Action 集成到你的 AI Agent 中。
 
 ### 集成到 GPTs

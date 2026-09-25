@@ -1,7 +1,5 @@
-import pino from "pino";
 import { Page } from "rebrowser-playwright-core";
-
-const logger = pino();
+import { logger } from '@/lib/logger';
 
 /**
  * Pause for a specified number of seconds.
