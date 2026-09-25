@@ -105,6 +105,7 @@ docker compose build && docker compose up
 - `SUNO_COOKIE` — the `Cookie` header you obtained in the first step.
 - `INTERNAL_API_KEY` — required by all `/api/*` and `/v1/*` routes. Send it as `x-api-key` or `Authorization: Bearer <key>`.
 - `TWOCAPTCHA_KEY` — your 2Captcha API key from the second step.
+- `SUNO_MODEL` — optional. Default model for all generation routes. Defaults to `chirp-goose` (Suno v6, free tier). A request's `model` field still wins.
 - `SUNO_MANUAL_VERIFICATION` — optional. Set to `true` only if you want the app to open a manual Suno verification browser when generation is blocked.
 - `BROWSER` — the name of the browser that is going to be used to solve the CAPTCHA. Only `chromium` and `firefox` supported.
 - `BROWSER_GHOST_CURSOR` — use ghost-cursor-playwright to simulate smooth mouse movements. Please note that it doesn't seem to make any difference in the rate of CAPTCHAs, so you can set it to `false`. Retained for future testing.
@@ -393,6 +394,10 @@ main();
 ```
 
 ## Integration with Custom Agents
+
+### MCP (Claude Code, Claude Desktop, Cursor, ...)
+
+Run `node mcp/index.mjs` as a stdio MCP server — real generation through the same code as this API, no Docker or Next.js needed. See [docs/mcp.md](docs/mcp.md).
 
 You can integrate Suno AI as a tool/plugin/action into your AI agent.
 

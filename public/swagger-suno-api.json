@@ -42,8 +42,8 @@
                   },
                   "model": {
                     "type": "string",
-                    "description": "Model name ,default is chirp-v3-5",
-                    "example": "chirp-v3-5|chirp-v3-0"
+                    "description": "Model name, default is chirp-goose (Suno v6, free tier; override with SUNO_MODEL)",
+                    "example": "chirp-goose"
                   },
                   "wait_audio": {
                     "type": "boolean",
@@ -101,8 +101,8 @@
                   },
                   "model": {
                     "type": "string",
-                    "description": "Model name ,default is chirp-v3-5",
-                    "example": "chirp-v3-5|chirp-v3-0"
+                    "description": "Model name, default is chirp-goose (Suno v6, free tier; override with SUNO_MODEL)",
+                    "example": "chirp-goose"
                   },
                   "wait_audio": {
                     "type": "boolean",
@@ -229,7 +229,7 @@
           "created_at": { "type": "string", "description": "Create time" },
           "model_name": {
             "type": "string",
-            "description": "suno model name, chirp-v3"
+            "description": "suno model name, e.g. chirp-goose"
           },
           "status": {
             "type": "string",

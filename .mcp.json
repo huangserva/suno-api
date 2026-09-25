@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "suno": {
+      "command": "node",
+      "args": ["mcp/index.mjs"]
+    }
+  }
+}
