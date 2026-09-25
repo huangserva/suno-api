@@ -18,7 +18,8 @@ const cache = globalForSunoApi.sunoApiCache || new Map<string, SunoApi>();
 globalForSunoApi.sunoApiCache = cache;
 
 const logger = pino();
-export const DEFAULT_MODEL = 'chirp-fenix';
+// chirp-goose is the free-tier Suno v6 model. Override with SUNO_MODEL (e.g. a paid model id).
+export const DEFAULT_MODEL = process.env.SUNO_MODEL || 'chirp-goose';
 const MANUAL_CAPTCHA_PROFILE_DIR = path.join(process.cwd(), '.data', 'suno-manual-captcha-profile');
 
 export interface AudioInfo {

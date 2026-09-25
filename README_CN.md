@@ -86,8 +86,11 @@ docker compose build && docker compose up
 ```bash
 SUNO_COOKIE=<your-cookie>
 INTERNAL_API_KEY=<your-internal-api-key>
+SUNO_MODEL=chirp-goose
 SUNO_MANUAL_VERIFICATION=false
 ```
+
+`SUNO_MODEL` 可选，默认 `chirp-goose`（Suno v6 免费模型）；请求体里的 `model` 字段优先。
 
 所有 `/api/*` 和 `/v1/*` 接口都需要内部鉴权。请求时传 `x-api-key: <your-internal-api-key>`，或传 `Authorization: Bearer <your-internal-api-key>`。
 

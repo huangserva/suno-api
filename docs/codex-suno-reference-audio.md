@@ -155,7 +155,7 @@ The tested shape is:
 {
   "reference_type": "cover",
   "audio_weight": 80,
-  "model": "chirp-fenix",
+  "model": "chirp-goose",
   "include_aligned_lyrics": false
 }
 ```

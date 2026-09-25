@@ -8,7 +8,7 @@ This document is for Codex or other local agents working with this fork. It avoi
 - `.env` exists locally and contains `SUNO_COOKIE` and `INTERNAL_API_KEY`.
 - Never print, paste, commit, or upload real `SUNO_COOKIE`, `INTERNAL_API_KEY`, `.env`, `.data`, or `public/mv-assets`.
 - All `/api/*` and `/v1/*` calls require `x-api-key`.
-- Default model is `chirp-fenix`.
+- Default model is `chirp-goose` (Suno v6, free tier). Override globally with `SUNO_MODEL` in `.env`, or per request with `"model"`.
 - Suno usually returns two candidate clips for one generation request.
 
 ## Start The Local API
@@ -158,7 +158,7 @@ Expected useful fields:
 - `401 Unauthorized`: `$KEY` is missing or does not match `.env` `INTERNAL_API_KEY`.
 - HTML response instead of JSON after adding routes: stop the dev server, remove `.next`, then run `npm run dev:mv` again.
 - `Suno requires human verification`: use `/api/mv/import_latest` after the human generates in the normal Suno web UI, or explicitly configure a verification-solving service.
-- `400 Something about your request isn't quite right`: check payload shape and model. This fork defaults to `chirp-fenix`.
+- `400 Something about your request isn't quite right`: check payload shape and model. This fork defaults to `chirp-goose` (v6); if your account cannot use it, set `SUNO_MODEL` or pass `"model"`.
 - No imported tracks: the Suno tracks may still be generating. Retry after they complete, or set `ready_only` to `false` if you want to import incomplete clips.
 
 ## Git Safety
