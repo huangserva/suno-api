@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +23,65 @@ const requiredCookieName = '__client';
 const pollTimeoutMs = 5 * 60 * 1000;
 const pollIntervalMs = 1000;
 const validationTimeoutMs = 10000;
+
+const hasProxyEnv = () =>
+  [
+    'HTTP_PROXY',
+    'HTTPS_PROXY',
+    'ALL_PROXY',
+    'http_proxy',
+    'https_proxy',
+    'all_proxy'
+  ].some((name) => Boolean(process.env[name]));
+
+const parseScutilProxy = (output) => {
+  const values = new Map();
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Za-z0-9]+)\s*:\s*(.+?)\s*$/);
+    if (match) {
+      values.set(match[1], match[2]);
+    }
+  }
+  return values;
+};
+
+export const applySystemProxyEnv = () => {
+  if (process.env.SUNO_USE_SYSTEM_PROXY === 'false' || hasProxyEnv()) {
+    return false;
+  }
+  if (process.platform !== 'darwin') {
+    return false;
+  }
+
+  try {
+    const proxy = parseScutilProxy(
+      execFileSync('scutil', ['--proxy'], {
+        encoding: 'utf8',
+        timeout: 3000
+      })
+    );
+    const proxyServer = proxy.get('HTTPSProxy') || proxy.get('HTTPProxy');
+    const proxyPort = proxy.get('HTTPSPort') || proxy.get('HTTPPort');
+    const enabled = proxy.get('HTTPSEnable') === '1' || proxy.get('HTTPEnable') === '1';
+
+    if (!enabled || !proxyServer || !proxyPort) {
+      return false;
+    }
+
+    const proxyUrl = `http://${proxyServer}:${proxyPort}`;
+    process.env.HTTP_PROXY = proxyUrl;
+    process.env.HTTPS_PROXY = proxyUrl;
+    process.env.http_proxy = proxyUrl;
+    process.env.https_proxy = proxyUrl;
+    process.env.NO_PROXY ||= '127.0.0.1,localhost,::1,*.local';
+    process.env.no_proxy ||= process.env.NO_PROXY;
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const systemProxyApplied = applySystemProxyEnv();
 
 export const readEnvFile = async () => {
   try {
@@ -238,7 +298,7 @@ export const ensureSunoCookie = async ({ force = false } = {}) => {
       await updateEnvFile(envUpdates);
       console.log('Generated INTERNAL_API_KEY in .env.');
     }
-    console.log('SUNO_COOKIE exists and is usable.');
+    console.log(`SUNO_COOKIE exists and is usable.${systemProxyApplied ? ' Using macOS system proxy.' : ''}`);
     return;
   }
 

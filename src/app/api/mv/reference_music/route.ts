@@ -78,9 +78,17 @@ const normalizeInput = (body: any): MvMusicInput => {
     model: toOptionalString(body.model) || DEFAULT_MODEL,
     include_aligned_lyrics: includeAlignedLyrics,
     reference_audio_path: toOptionalString(body.reference_audio_path),
+    reference_clip_id: toOptionalString(body.reference_clip_id),
+    reference_title: toOptionalString(body.reference_title),
+    reference_display_tags: toOptionalString(body.reference_display_tags),
+    reference_duration: toOptionalNumber(body.reference_duration),
+    artist_audio_path: toOptionalString(body.artist_audio_path || body.tone_audio_path),
+    artist_clip_id: toOptionalString(body.artist_clip_id),
     reference_type: toReferenceType(body.reference_type),
     continue_at: toOptionalNumber(body.continue_at),
     audio_weight: toOptionalNumber(body.audio_weight),
+    artist_start_s: toOptionalNumber(body.artist_start_s),
+    artist_end_s: toOptionalNumber(body.artist_end_s),
     metadata:
       body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
         ? body.metadata
@@ -93,9 +101,9 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const input = normalizeInput(body);
 
-    if (!input.reference_audio_path) {
+    if (!input.reference_audio_path && !input.reference_clip_id) {
       return new NextResponse(
-        JSON.stringify({ error: 'reference_audio_path is required' }),
+        JSON.stringify({ error: 'reference_audio_path or reference_clip_id is required' }),
         {
           status: 400,
           headers: {
@@ -106,11 +114,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    await assertReferenceAudioFile(input.reference_audio_path);
+    if (input.reference_audio_path) {
+      await assertReferenceAudioFile(input.reference_audio_path);
+    }
+    if (input.artist_audio_path) {
+      await assertReferenceAudioFile(input.artist_audio_path);
+    }
 
     const api = await sunoApi((await cookies()).toString());
     const result = await api.generateReferenceAudio({
       reference_audio_path: input.reference_audio_path,
+      reference_clip_id: input.reference_clip_id,
+      reference_title: input.reference_title,
+      reference_display_tags: input.reference_display_tags,
+      reference_duration: input.reference_duration,
+      artist_audio_path: input.artist_audio_path,
+      artist_clip_id: input.artist_clip_id,
       reference_type: input.reference_type,
       prompt: input.prompt,
       lyrics: input.lyrics,
@@ -121,6 +140,8 @@ export async function POST(req: NextRequest) {
       model: input.model || DEFAULT_MODEL,
       continue_at: input.continue_at,
       audio_weight: input.audio_weight,
+      artist_start_s: input.artist_start_s,
+      artist_end_s: input.artist_end_s,
       wait_audio: false
     });
 
@@ -129,7 +150,8 @@ export async function POST(req: NextRequest) {
       metadata: {
         ...(input.metadata || {}),
         source: 'suno_reference_music',
-        reference_upload: result.upload
+        reference_upload: result.upload,
+        artist_upload: result.artist_upload
       }
     };
     const task = await createMvTask(

@@ -9,6 +9,8 @@ import { Solver } from '@2captcha/captcha-solver';
 import { paramsCoordinates } from '@2captcha/captcha-solver/dist/structs/2captcha';
 import { BrowserContext, Page, Locator, chromium, firefox } from 'rebrowser-playwright-core';
 import { createCursor, Cursor } from 'ghost-cursor-playwright';
+import NodeFormData from 'form-data';
+import { createReadStream } from 'node:fs';
 import { promises as fs } from 'fs';
 import path from 'node:path';
 
@@ -19,7 +21,10 @@ globalForSunoApi.sunoApiCache = cache;
 
 const logger = pino();
 export const DEFAULT_MODEL = 'chirp-fenix';
-const MANUAL_CAPTCHA_PROFILE_DIR = path.join(process.cwd(), '.data', 'suno-manual-captcha-profile');
+const SUNO_AUTH_PROFILE_DIR = path.join(process.cwd(), '.data', 'suno-auth-profile');
+const MANUAL_CAPTCHA_PROFILE_DIR = process.env.SUNO_MANUAL_PROFILE_DIR
+  ? path.resolve(process.env.SUNO_MANUAL_PROFILE_DIR)
+  : SUNO_AUTH_PROFILE_DIR;
 
 export interface AudioInfo {
   id: string; // Unique identifier for the audio
@@ -55,7 +60,12 @@ export interface SunoUploadedAudioInfo {
 }
 
 export interface SunoReferenceGenerateOptions {
-  reference_audio_path: string;
+  reference_audio_path?: string;
+  reference_clip_id?: string;
+  reference_title?: string;
+  reference_display_tags?: string;
+  reference_duration?: number;
+  artist_audio_path?: string;
   reference_type?: 'extend' | 'cover';
   prompt?: string;
   lyrics?: string;
@@ -66,11 +76,15 @@ export interface SunoReferenceGenerateOptions {
   model?: string;
   continue_at?: number;
   audio_weight?: number;
+  artist_start_s?: number;
+  artist_end_s?: number;
+  artist_clip_id?: string;
   wait_audio?: boolean;
 }
 
 export interface SunoReferenceGenerateResult {
   upload: SunoUploadedAudioInfo;
+  artist_upload?: SunoUploadedAudioInfo;
   clips: AudioInfo[];
 }
 
@@ -262,6 +276,36 @@ class SunoApi {
     return mimeType;
   }
 
+  private async postS3UploadWithAxios(
+    url: string,
+    fields: Record<string, unknown>,
+    filePath: string,
+    mimeType: string
+  ) {
+    const form = new NodeFormData();
+
+    for (const [key, value] of Object.entries(fields)) {
+      form.append(key, String(value));
+    }
+
+    form.append('file', createReadStream(filePath), {
+      filename: path.basename(filePath),
+      contentType: mimeType
+    });
+
+    const response = await axios.post(url, form, {
+      headers: form.getHeaders(),
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      timeout: 120000,
+      validateStatus: () => true
+    });
+
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`Suno S3 upload failed: ${response.status} ${response.statusText}`);
+    }
+  }
+
   private async postS3Upload(url: string, fields: Record<string, unknown>, filePath: string, mimeType: string) {
     const fileBuffer = await fs.readFile(filePath);
     const form = new FormData();
@@ -276,10 +320,17 @@ class SunoApi {
       path.basename(filePath)
     );
 
-    const response = await fetch(url, {
-      method: 'POST',
-      body: form
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        body: form
+      });
+    } catch (error: any) {
+      logger.warn(`Suno S3 upload via fetch failed, retrying with axios: ${error.message || error}`);
+      await this.postS3UploadWithAxios(url, fields, filePath, mimeType);
+      return;
+    }
 
     if (!response.ok) {
       throw new Error(`Suno S3 upload failed: ${response.status} ${response.statusText}`);
@@ -478,7 +529,7 @@ class SunoApi {
         audio_weight: this.normalizeControlWeight(options.audio_weight, 65)
       },
       is_remix: true,
-      lyrics_updated: false
+      lyrics_updated: Boolean(lyrics)
     };
 
     const payload: any = {
@@ -502,9 +553,13 @@ class SunoApi {
       cover_start_s: null,
       cover_end_s: null,
       persona_id: null,
-      artist_clip_id: null,
-      artist_start_s: null,
-      artist_end_s: null,
+      artist_clip_id: options.artist_clip_id || null,
+      artist_start_s: options.artist_clip_id
+        ? Math.max(0, Number(options.artist_start_s ?? 0))
+        : null,
+      artist_end_s: options.artist_clip_id
+        ? (Number.isFinite(options.artist_end_s) ? Number(options.artist_end_s) : null)
+        : null,
       continue_clip_id: null,
       continued_aligned_prompt: null,
       continue_at: null,
@@ -539,6 +594,9 @@ class SunoApi {
             continue_clip_id: payload.continue_clip_id,
             continue_at: payload.continue_at,
             cover_clip_id: payload.cover_clip_id,
+            artist_clip_id: payload.artist_clip_id,
+            artist_start_s: payload.artist_start_s,
+            artist_end_s: payload.artist_end_s,
             metadata: payload.metadata
           },
           null,
@@ -589,13 +647,32 @@ class SunoApi {
   public async generateReferenceAudio(
     options: SunoReferenceGenerateOptions
   ): Promise<SunoReferenceGenerateResult> {
-    const upload = await this.uploadAudioFile(options.reference_audio_path, {
-      title: options.title,
-      lyrics: options.lyrics || options.prompt
+    const upload = options.reference_clip_id
+      ? {
+          upload_id: 'existing-suno-clip',
+          clip_id: options.reference_clip_id,
+          title: options.reference_title || options.title,
+          display_tags: options.reference_display_tags || options.tags,
+          duration: options.reference_duration
+        }
+      : await this.uploadAudioFile(options.reference_audio_path || '', {
+          title: options.title,
+          lyrics: options.lyrics || options.prompt
+        });
+    const artistUpload = options.artist_audio_path
+      ? await this.uploadAudioFile(options.artist_audio_path, {
+          title: `${options.title || 'Reference Track'} Artist Tone`,
+          lyrics: options.lyrics || options.prompt
+        })
+      : undefined;
+    const clips = await this.generateFromReferenceClip(upload, {
+      ...options,
+      artist_clip_id: artistUpload?.clip_id || options.artist_clip_id,
+      artist_start_s: options.artist_start_s ?? (artistUpload ? 0 : undefined),
+      artist_end_s: options.artist_end_s ?? artistUpload?.duration
     });
-    const clips = await this.generateFromReferenceClip(upload, options);
 
-    return { upload, clips };
+    return { upload, artist_upload: artistUpload, clips };
   }
 
   private async captchaRequired(): Promise<boolean> {
@@ -669,11 +746,29 @@ class SunoApi {
         '--disable-gpu',
         '--disable-setuid-sandbox');
     let context: BrowserContext;
+    const executablePath = process.env.BROWSER_EXECUTABLE_PATH?.trim();
+    const proxyServer = (
+      process.env.HTTPS_PROXY ||
+      process.env.https_proxy ||
+      process.env.HTTP_PROXY ||
+      process.env.http_proxy ||
+      ''
+    ).trim();
+    const launchOptions: Record<string, unknown> = executablePath
+      ? { executablePath }
+      : {};
+    if (proxyServer) {
+      launchOptions.proxy = { server: proxyServer };
+    }
+    if (options?.headless === false && !executablePath) {
+      launchOptions.channel = 'chrome';
+    }
     if (options?.headless === false) {
       await fs.mkdir(MANUAL_CAPTCHA_PROFILE_DIR, { recursive: true });
       context = await this.getBrowserType().launchPersistentContext(
         MANUAL_CAPTCHA_PROFILE_DIR,
         {
+          ...launchOptions,
           args,
           headless: false,
           userAgent: this.userAgent,
@@ -683,6 +778,7 @@ class SunoApi {
       );
     } else {
       const browser = await this.getBrowserType().launch({
+        ...launchOptions,
         args,
         headless: yn(process.env.BROWSER_HEADLESS, { default: true })
       });
@@ -722,6 +818,62 @@ class SunoApi {
       }
     }
     return context;
+  }
+
+  private async getManualCreateButton(page: Page): Promise<Locator> {
+    const buttons = await page.locator('button').all();
+    const candidates: Array<{
+      button: Locator;
+      score: number;
+      label: string;
+      x: number;
+      y: number;
+    }> = [];
+
+    for (const button of buttons) {
+      try {
+        if (!(await button.isVisible()) || !(await button.isEnabled())) {
+          continue;
+        }
+        const aria = (await button.getAttribute('aria-label')) || '';
+        const text = (await button.innerText().catch(() => '')) || '';
+        const label = `${aria} ${text}`.trim();
+        if (!/(create|generate)/i.test(label)) {
+          continue;
+        }
+        const box = await button.boundingBox();
+        if (!box) {
+          continue;
+        }
+
+        let score = 0;
+        if (/create song/i.test(label)) score += 100;
+        if (/generate/i.test(label)) score += 90;
+        if (/^create$/i.test(aria.trim()) || /^create$/i.test(text.trim())) score += 70;
+        if (box.x > 240) score += 40;
+        else score -= 60;
+        if (box.y > 430) score += 20;
+        score += Math.min(box.y / 100, 10);
+
+        candidates.push({ button, score, label, x: box.x, y: box.y });
+      } catch (error: any) {
+        logger.info(`Skipping create button candidate: ${error.message}`);
+      }
+    }
+
+    candidates.sort((a, b) => b.score - a.score);
+    const best = candidates[0];
+    if (!best) {
+      throw new Error('Could not find an enabled Suno Create/Generate button in the manual browser.');
+    }
+
+    logger.info({
+      label: best.label,
+      score: best.score,
+      x: Math.round(best.x),
+      y: Math.round(best.y)
+    }, 'Clicking manual Suno create button');
+    return best.button;
   }
 
   /**
@@ -765,7 +917,6 @@ class SunoApi {
           if (route.request().method() !== 'POST') {
             return route.continue();
           }
-          logger.info('hCaptcha token received. Closing browser');
           await route.abort();
           await closeBrowser();
           controller.abort();
@@ -773,9 +924,11 @@ class SunoApi {
           this.currentToken = request.headers().authorization.split('Bearer ').pop();
           const token = request.postDataJSON()?.token;
           if (!token) {
-            reject(new Error('Suno generate request did not include an hCaptcha token.'));
+            logger.info('Suno generate request was observed, but it did not include an hCaptcha token.');
+            reject(new Error('Manual Suno browser submitted a generate request, but Suno did not attach an hCaptcha token. If no verification appeared, the manual verification script does not match the current Suno flow.'));
             return;
           }
+          logger.info('hCaptcha token received. Closing browser');
           resolve(token);
         } catch(err) {
           reject(err);
@@ -800,35 +953,19 @@ class SunoApi {
     await this.click(textarea);
     await textarea.pressSequentially('Lorem ipsum', { delay: 80 });
 
-    let button = page.locator('button[aria-label="Create song"]').first();
-    if ((await button.count()) === 0) {
-      button = page.locator('button[aria-label="Create"]').first();
-    }
-    if ((await button.count()) === 0) {
-      button = page.getByRole('button', { name: /Create/ }).first();
-    }
-    await button.waitFor({ timeout: 30000 });
-    await page.waitForFunction(() => {
-      const buttons = Array.from(document.querySelectorAll('button'));
-      const createButton = buttons.find(button => {
-        const label = button.getAttribute('aria-label') || '';
-        const text = (button.textContent || '').trim();
-        return label === 'Create song' || label === 'Create' || text === 'Create';
-      });
-      return Boolean(createButton && !createButton.disabled);
-    }, undefined, { timeout: 30000 });
+    const button = await this.getManualCreateButton(page);
     await button.scrollIntoViewIfNeeded();
     await this.click(button);
 
     if (!hasCaptchaSolver) {
-      logger.info('Manual verification mode. Complete the verification in the opened Suno browser window.');
+      logger.info('Manual verification mode. If Suno shows a verification challenge, complete it in the opened browser window. If no challenge appears, leave the window open while the script waits for the generate request token.');
       const timeoutMs = Number(process.env.SUNO_MANUAL_CAPTCHA_TIMEOUT_MS || 5 * 60 * 1000);
       return Promise.race([
         tokenPromise,
         new Promise<null>((_, reject) => {
           setTimeout(() => {
             closeBrowser();
-            reject(new Error(`Manual Suno verification was not completed within ${Math.round(timeoutMs / 1000)} seconds.`));
+            reject(new Error(`Manual Suno verification did not produce a generate token within ${Math.round(timeoutMs / 1000)} seconds. If no challenge appeared, the script likely did not trigger Suno's current generate flow.`));
           }, timeoutMs);
         })
       ]);

@@ -16,9 +16,17 @@ export interface MvMusicInput {
   model?: string;
   include_aligned_lyrics?: boolean;
   reference_audio_path?: string;
+  reference_clip_id?: string;
+  reference_title?: string;
+  reference_display_tags?: string;
+  reference_duration?: number;
+  artist_audio_path?: string;
+  artist_clip_id?: string;
   reference_type?: 'extend' | 'cover';
   continue_at?: number;
   audio_weight?: number;
+  artist_start_s?: number;
+  artist_end_s?: number;
   metadata?: Record<string, unknown>;
 }
 
